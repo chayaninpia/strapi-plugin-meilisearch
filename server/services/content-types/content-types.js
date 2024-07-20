@@ -195,11 +195,85 @@ module.exports = ({ strapi }) => ({
     if (locale) {
       queryOptions.locale = locale
     }
-
     const entries = await strapi.entityService.findMany(
       contentTypeUid,
       queryOptions,
     )
+
+    // Safe guard in case the content-type is a single type.
+    // In which case it is wrapped in an array for consistency.
+    if (entries && !Array.isArray(entries)) return [entries]
+    return entries || []
+  },
+
+  /**
+   * Returns a batch of entries of a given content type.
+   * More information: https://docs.strapi.io/developer-docs/latest/developer-resources/database-apis-reference/entity-service/crud.html#findmany
+   *
+   * @param  {object} options
+   * @param  {string | string[]} [options.fields] - Fields present in the returned entry.
+   * @param  {number} [options.start] - Pagination start.
+   * @param  {number} [options.limit] - Number of entries to return.
+   * @param  {object} [options.filters] - Filters to use.
+   * @param  {object|string} [options.sort] - Order definition.
+   * @param  {object} [options.populate] - Relations, components and dynamic zones to populate.
+   * @param  {object} [options.publicationState] - Publication state: live or preview.
+   * @param  {string} options.contentType - Content type.
+   * @param  {string} [options.locale] - When using internalization, the language to fetch.
+   *
+   * @returns  {Promise<object[]>} - Entries.
+   */
+  async getEntriesWithCursor({
+    contentType,
+    fields = '*',
+    start = 0,
+    limit = 500,
+    filters = {},
+    sort = 'id',
+    populate = '*',
+    publicationState = 'live',
+    locale,
+  }) {
+    const contentTypeUid = this.getContentTypeUid({ contentType })
+    if (contentTypeUid === undefined) return []
+
+    const store = strapi.plugin('meilisearch').service('store')
+    var cursor = await store.getLastCursorByUid({contentTypeUid})
+    
+    if (start === 0) {
+      cursor = 0
+      store.setLastCursorByUid({
+        uid: contentTypeUid,
+        cursor,
+      })
+    }
+
+    filters.id = {
+      ...filters?.id,
+      $gt: cursor,
+    };
+    
+    const queryOptions = {
+      fields: fields || '*',
+      limit,
+      filters,
+      sort,
+      populate,
+      publicationState,
+    }
+    // To avoid issue if internalization is not installed by the user
+    if (locale) {
+      queryOptions.locale = locale
+    }
+    const entries = await strapi.entityService.findMany(
+      contentTypeUid,
+      queryOptions,
+    )
+
+    const lastCursor =
+    entries && entries.length > 0 ? entries[entries?.length - 1].id : 0;
+
+    store.setLastCursorByUid({ uid: contentTypeUid, cursor: lastCursor });
 
     // Safe guard in case the content-type is a single type.
     // In which case it is wrapped in an array for consistency.
@@ -230,11 +304,12 @@ module.exports = ({ strapi }) => ({
     const cbResponse = []
     for (let index = 0; index < entries_count; index += batchSize) {
       const entries =
-        (await this.getEntries({
+        (await this.getEntriesWithCursor({
           start: index,
+          limit: batchSize,
           contentType,
           ...entriesQuery,
-        })) || []
+        })) || [];
 
       if (entries.length > 0) {
         const info = await callback({ entries, contentType })
