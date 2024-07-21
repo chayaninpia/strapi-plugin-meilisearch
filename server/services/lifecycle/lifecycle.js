@@ -86,7 +86,7 @@ module.exports = ({ strapi }) => {
           const BATCH_SIZE = 500
 
           for (let pos = 0; pos < nbrEntries; pos += BATCH_SIZE) {
-            const batch = await contentTypeService.getEntries({
+            const batch = await contentTypeService.getEntriesWithCursor({
               contentType: contentTypeUid,
               filters: event.params.where,
               start: pos,
